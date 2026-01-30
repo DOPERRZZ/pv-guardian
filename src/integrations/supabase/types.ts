@@ -14,7 +14,96 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      fault_history: {
+        Row: {
+          confidence: number
+          created_at: string
+          dataset_name: string | null
+          duration: string | null
+          fault_type: string
+          features_used: string[] | null
+          id: string
+          severity: string
+          timestamp: string
+        }
+        Insert: {
+          confidence: number
+          created_at?: string
+          dataset_name?: string | null
+          duration?: string | null
+          fault_type: string
+          features_used?: string[] | null
+          id?: string
+          severity: string
+          timestamp?: string
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          dataset_name?: string | null
+          duration?: string | null
+          fault_type?: string
+          features_used?: string[] | null
+          id?: string
+          severity?: string
+          timestamp?: string
+        }
+        Relationships: []
+      }
+      predictions: {
+        Row: {
+          created_at: string
+          dataset_name: string | null
+          id: string
+          input_features: Json | null
+          predicted_fault: string
+          probabilities: Json
+          timestamp: string
+        }
+        Insert: {
+          created_at?: string
+          dataset_name?: string | null
+          id?: string
+          input_features?: Json | null
+          predicted_fault: string
+          probabilities: Json
+          timestamp?: string
+        }
+        Update: {
+          created_at?: string
+          dataset_name?: string | null
+          id?: string
+          input_features?: Json | null
+          predicted_fault?: string
+          probabilities?: Json
+          timestamp?: string
+        }
+        Relationships: []
+      }
+      system_status: {
+        Row: {
+          confidence: number
+          current_fault: string
+          id: string
+          last_updated: string
+          status: string
+        }
+        Insert: {
+          confidence?: number
+          current_fault?: string
+          id?: string
+          last_updated?: string
+          status?: string
+        }
+        Update: {
+          confidence?: number
+          current_fault?: string
+          id?: string
+          last_updated?: string
+          status?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
