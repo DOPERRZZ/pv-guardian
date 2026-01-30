@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Play, RotateCcw } from 'lucide-react';
 import { FaultType } from '@/types/pv-system';
+import { runPrediction, PredictionResponse } from '@/lib/api';
+import { toast } from 'sonner';
 
-// Mock data for demonstration
+// Mock data for demonstration (used when actual file parsing isn't available)
 const mockDataset = [
   { Time: '2025-01-09 08:00', Voltage: 48.2, Current: 5.1, Power: 245.8, Irradiance: 650, Temperature: 32.1 },
   { Time: '2025-01-09 08:10', Voltage: 48.5, Current: 5.3, Power: 257.1, Irradiance: 680, Temperature: 32.5 },
@@ -29,6 +31,7 @@ export default function Analysis() {
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(['Voltage', 'Current', 'Power']);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [predictionResults, setPredictionResults] = useState<{ faultType: FaultType; probability: number }[] | null>(null);
+  const [predictionTimestamp, setPredictionTimestamp] = useState<string>('');
 
   const handleFileSelect = (file: File) => {
     setUploadedFile(file);
@@ -37,6 +40,7 @@ export default function Analysis() {
     // Simulate file parsing (in real app, would use xlsx library)
     setTimeout(() => {
       setDataset(mockDataset);
+      toast.success('Dataset loaded successfully');
     }, 500);
   };
 
@@ -49,23 +53,50 @@ export default function Analysis() {
   };
 
   const handleRunInference = async () => {
+    if (!dataset) return;
+    
     setIsAnalyzing(true);
     
-    // Simulate ML inference
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Mock prediction results
-    setPredictionResults([
-      { faultType: 'Line-Line Fault', probability: 0.847 },
-      { faultType: 'Normal', probability: 0.098 },
-      { faultType: 'Partial Shading', probability: 0.032 },
-      { faultType: 'Ground Fault', probability: 0.015 },
-      { faultType: 'Open Circuit', probability: 0.005 },
-      { faultType: 'Degradation', probability: 0.002 },
-      { faultType: 'Arc Fault', probability: 0.001 },
-    ]);
-    
-    setIsAnalyzing(false);
+    try {
+      // Call the backend ML inference endpoint
+      const response: PredictionResponse = await runPrediction(
+        dataset as Record<string, unknown>[],
+        selectedFeatures,
+        uploadedFile?.name
+      );
+
+      // Convert response to expected format
+      const results = response.predictions.map(p => ({
+        faultType: p.faultType as FaultType,
+        probability: p.probability
+      }));
+
+      setPredictionResults(results);
+      setPredictionTimestamp(response.timestamp);
+      
+      toast.success(`Analysis complete: ${response.topPrediction.faultType} detected`, {
+        description: `Confidence: ${(response.topPrediction.probability * 100).toFixed(1)}%`
+      });
+    } catch (error) {
+      console.error('Inference error:', error);
+      toast.error('Failed to run inference', {
+        description: error instanceof Error ? error.message : 'Unknown error'
+      });
+      
+      // Fallback to mock results for demo
+      setPredictionResults([
+        { faultType: 'Line-Line Fault', probability: 0.847 },
+        { faultType: 'Normal', probability: 0.098 },
+        { faultType: 'Partial Shading', probability: 0.032 },
+        { faultType: 'Ground Fault', probability: 0.015 },
+        { faultType: 'Open Circuit', probability: 0.005 },
+        { faultType: 'Degradation', probability: 0.002 },
+        { faultType: 'Arc Fault', probability: 0.001 },
+      ]);
+      setPredictionTimestamp(new Date().toISOString());
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const handleReset = () => {
@@ -173,7 +204,7 @@ export default function Analysis() {
       {predictionResults && (
         <PredictionResults
           results={predictionResults}
-          timestamp={new Date().toISOString()}
+          timestamp={predictionTimestamp || new Date().toISOString()}
         />
       )}
     </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { StatusCard } from '@/components/dashboard/StatusCard';
 import { TimeSeriesChart } from '@/components/dashboard/TimeSeriesChart';
 import { generateTimeSeriesData } from '@/lib/mock-data';
+import { getSystemStatus, SystemStatus as ApiSystemStatus } from '@/lib/api';
 import { PVDataPoint, FaultType, SystemStatus } from '@/types/pv-system';
 
 export default function Dashboard() {
@@ -10,24 +11,41 @@ export default function Dashboard() {
   const [currentFault, setCurrentFault] = useState<FaultType>('Normal');
   const [confidence, setConfidence] = useState(98.2);
   const [lastUpdated, setLastUpdated] = useState(new Date().toISOString());
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Generate initial data with a fault
+    // Generate time series data
     const data = generateTimeSeriesData(24, true);
     setTimeSeriesData(data);
 
-    // Simulate a fault detection
-    const hasFault = data.some(d => d.isFault);
-    if (hasFault) {
-      setSystemStatus('Fault');
-      setCurrentFault('Line-Line Fault');
-      setConfidence(94.7);
+    // Fetch system status from backend
+    async function fetchStatus() {
+      try {
+        const status = await getSystemStatus();
+        setSystemStatus(status.status);
+        setCurrentFault(status.current_fault as FaultType);
+        setConfidence(Number(status.confidence) * 100);
+        setLastUpdated(status.last_updated);
+      } catch (error) {
+        console.error('Failed to fetch status:', error);
+        // Fallback to mock data
+        const hasFault = data.some(d => d.isFault);
+        if (hasFault) {
+          setSystemStatus('Fault');
+          setCurrentFault('Line-Line Fault');
+          setConfidence(94.7);
+        }
+      } finally {
+        setIsLoading(false);
+      }
     }
 
-    // Update timestamp periodically
+    fetchStatus();
+
+    // Refresh status periodically
     const interval = setInterval(() => {
-      setLastUpdated(new Date().toISOString());
-    }, 5000);
+      fetchStatus();
+    }, 10000);
 
     return () => clearInterval(interval);
   }, []);
@@ -46,7 +64,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">System Overview</h2>
         <span className="text-xs text-muted-foreground font-mono">
-          Last updated: {formattedDate}
+          {isLoading ? 'Loading...' : `Last updated: ${formattedDate}`}
         </span>
       </div>
 
