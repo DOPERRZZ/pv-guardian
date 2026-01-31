@@ -2,8 +2,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 }
+
+// Input validation constants
+const MAX_ROWS = 1000
+const MAX_DATASET_NAME_LENGTH = 255
+const ALLOWED_FEATURES = ['Voltage', 'Current', 'Power', 'Irradiance', 'Temperature', 'voltage', 'current', 'power', 'irradiance', 'temperature']
 
 // Fault types for classification
 const FAULT_TYPES = [
@@ -94,6 +99,78 @@ function getSeverity(confidence: number): 'Low' | 'Medium' | 'High' | 'Critical'
   return 'Low'
 }
 
+// Validate input data structure
+function validateInput(body: unknown): { valid: boolean; error?: string; data?: Record<string, number>[]; features?: string[]; datasetName?: string } {
+  if (typeof body !== 'object' || body === null) {
+    return { valid: false, error: 'Request body must be an object' }
+  }
+
+  const { data, features, datasetName } = body as { data?: unknown; features?: unknown; datasetName?: unknown }
+
+  // Validate data array
+  if (!data || !Array.isArray(data)) {
+    return { valid: false, error: 'Data must be an array' }
+  }
+
+  if (data.length === 0) {
+    return { valid: false, error: 'Data array cannot be empty' }
+  }
+
+  if (data.length > MAX_ROWS) {
+    return { valid: false, error: `Data must contain at most ${MAX_ROWS} rows` }
+  }
+
+  // Validate each row is an object with numeric values
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i]
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      return { valid: false, error: `Row ${i + 1} must be an object` }
+    }
+  }
+
+  // Validate features array if provided
+  let validatedFeatures = ['Voltage', 'Current', 'Power']
+  if (features !== undefined) {
+    if (!Array.isArray(features)) {
+      return { valid: false, error: 'Features must be an array' }
+    }
+    
+    if (features.length === 0) {
+      return { valid: false, error: 'Features array cannot be empty' }
+    }
+
+    for (const feature of features) {
+      if (typeof feature !== 'string') {
+        return { valid: false, error: 'Each feature must be a string' }
+      }
+      if (!ALLOWED_FEATURES.includes(feature)) {
+        return { valid: false, error: `Invalid feature: ${feature}. Allowed: ${ALLOWED_FEATURES.join(', ')}` }
+      }
+    }
+    validatedFeatures = features as string[]
+  }
+
+  // Validate dataset name
+  let validatedDatasetName = 'uploaded_data.xlsx'
+  if (datasetName !== undefined) {
+    if (typeof datasetName !== 'string') {
+      return { valid: false, error: 'Dataset name must be a string' }
+    }
+    if (datasetName.length > MAX_DATASET_NAME_LENGTH) {
+      return { valid: false, error: `Dataset name must be at most ${MAX_DATASET_NAME_LENGTH} characters` }
+    }
+    // Sanitize dataset name - remove any potentially dangerous characters
+    validatedDatasetName = datasetName.replace(/[<>:"/\\|?*]/g, '_').trim() || 'uploaded_data.xlsx'
+  }
+
+  return { 
+    valid: true, 
+    data: data as Record<string, number>[], 
+    features: validatedFeatures,
+    datasetName: validatedDatasetName
+  }
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -101,24 +178,69 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Authentication check
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      console.log('Unauthorized request: No valid Authorization header')
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Create client with user's token for auth verification
+    const supabaseAuth = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } }
+    )
+
+    const token = authHeader.replace('Bearer ', '')
+    const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getClaims(token)
+    
+    if (claimsError || !claimsData?.claims) {
+      console.log('Unauthorized request: Invalid token')
+      return new Response(
+        JSON.stringify({ error: 'Invalid token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const userId = claimsData.claims.sub
+    console.log(`Authenticated request from user: ${userId}`)
+
+    // Create service role client for database operations
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    const { data, features, datasetName } = await req.json()
-    
-    if (!data || !Array.isArray(data) || data.length === 0) {
+    // Parse and validate input
+    let body: unknown
+    try {
+      body = await req.json()
+    } catch {
       return new Response(
-        JSON.stringify({ error: 'No data provided' }),
+        JSON.stringify({ error: 'Invalid JSON body' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log(`Received prediction request: ${data.length} rows, features: ${features?.join(', ')}`)
+    const validation = validateInput(body)
+    if (!validation.valid) {
+      console.log(`Validation error: ${validation.error}`)
+      return new Response(
+        JSON.stringify({ error: validation.error }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const { data, features, datasetName } = validation
+
+    console.log(`Received prediction request: ${data!.length} rows, features: ${features!.join(', ')}`)
 
     // Run ML inference
-    const predictions = runInference(data, features || ['Voltage', 'Current', 'Power'])
+    const predictions = runInference(data!, features!)
     const topPrediction = predictions[0]
     
     console.log(`Top prediction: ${topPrediction.faultType} (${topPrediction.probability})`)
@@ -129,8 +251,8 @@ Deno.serve(async (req) => {
       .insert({
         predicted_fault: topPrediction.faultType,
         probabilities: predictions,
-        input_features: { features, rowCount: data.length },
-        dataset_name: datasetName || 'uploaded_data.xlsx'
+        input_features: { features, rowCount: data!.length },
+        dataset_name: datasetName
       })
 
     if (predictionError) {
@@ -147,8 +269,8 @@ Deno.serve(async (req) => {
           fault_type: topPrediction.faultType,
           severity,
           confidence: topPrediction.probability,
-          dataset_name: datasetName || 'uploaded_data.xlsx',
-          features_used: features || ['Voltage', 'Current', 'Power']
+          dataset_name: datasetName,
+          features_used: features
         })
 
       if (historyError) {
@@ -183,9 +305,8 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Prediction error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
     return new Response(
-      JSON.stringify({ error: message }),
+      JSON.stringify({ error: 'An error occurred processing your request' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }

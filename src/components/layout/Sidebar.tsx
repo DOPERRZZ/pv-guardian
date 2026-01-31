@@ -1,12 +1,16 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   LineChart, 
   History, 
   Cpu, 
-  Settings 
+  Settings,
+  LogOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -18,6 +22,14 @@ const navItems = [
 
 export function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+    toast.success('Signed out successfully');
+    navigate('/auth');
+  };
 
   return (
     <aside className="fixed left-0 top-14 bottom-0 w-56 bg-sidebar border-r border-sidebar-border">
@@ -43,7 +55,23 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="absolute bottom-4 left-4 right-4">
+      <div className="absolute bottom-4 left-4 right-4 space-y-3">
+        {user && (
+          <div className="p-3 bg-muted/50 rounded-sm">
+            <p className="text-xs text-muted-foreground truncate">
+              {user.email}
+            </p>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleSignOut}
+              className="w-full mt-2 justify-start text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign Out
+            </Button>
+          </div>
+        )}
         <div className="p-3 bg-muted/50 rounded-sm">
           <p className="text-xs text-muted-foreground font-mono">
             System v2.1.0
